@@ -1,5 +1,7 @@
 #SphinxClient
+
 使用方法：
+
 A、看里面Example
 
 B、看“http://jhonge.net/Home/Index/1/306”
