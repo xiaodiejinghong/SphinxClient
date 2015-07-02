@@ -26,6 +26,11 @@
         /// <summary>
         ///
         /// </summary>
+        private IList<SphinxFilter> _filters { get; set; }
+
+        /// <summary>
+        ///
+        /// </summary>
         private bool _hasouter = false;
 
         /// <summary>
@@ -62,11 +67,6 @@
         /// 获取或设置CutOff
         /// </summary>
         public int CutOff { get; set; }
-
-        /// <summary>
-        /// 获取或设置Filters
-        /// </summary>
-        public IList<SphinxFilter> Filters { get; set; }
 
         /// <summary>
         /// 获取或设置GroupBy
@@ -194,6 +194,11 @@
         public string SortBy { get; set; }
 
         /// <summary>
+        /// 获得状态
+        /// </summary>
+        public string[][] Status { get { return this.GetStatus(); } }
+
+        /// <summary>
         /// 获取或设置TimeOut
         /// </summary>
         public int TimeOut { get; set; }
@@ -242,7 +247,7 @@
             this.Weights = new List<int>();
             this.MaxID = 0;
             this.MaxID = 0;
-            this.Filters = new List<SphinxFilter>();
+            this._filters = new List<SphinxFilter>();
             this.GroupFunc = Enum.GroupFunc.SPH_GROUPBY_DAY;
             this.GroupBy = string.Empty;
             this.MaxMatches = 1000;
@@ -273,7 +278,7 @@
         /// <returns>待查询任务数目</returns>
         public int AddQuery(string query, string index = "*", string comment = "")
         {
-            Contract.Requires(false == string.IsNullOrWhiteSpace(query),"query can not be null or empty");
+            Contract.Requires(false == string.IsNullOrWhiteSpace(query), "query can not be null or empty");
             var sphreq = new SphReq();
             sphreq.Write(this.Offset);
             sphreq.Write(this.Limit);
@@ -289,8 +294,8 @@
             sphreq.Write(1);
             sphreq.Write(this.MinID);
             sphreq.Write(this.MaxID);
-            sphreq.Write(this.Filters.Count());
-            foreach (var filter in this.Filters)
+            sphreq.Write(this._filters.Count());
+            foreach (var filter in this._filters)
             {
                 sphreq.Write(filter.Attr);
                 sphreq.Write((int)filter.Type);
@@ -316,7 +321,7 @@
                         sphreq.Write(filter.SValue);
                         break;
                 }
-                sphreq.Write(filter.Exclude);
+                sphreq.Write(filter.Exclude ? 1 : 0);
             }
             sphreq.Write((int)this.GroupFunc);
             sphreq.Write(this.GroupBy);
@@ -491,6 +496,14 @@
         }
 
         /// <summary>
+        /// 清除当前设置的过滤器
+        /// </summary>
+        public void ClearFilters()
+        {
+            this._filters.Clear();
+        }
+
+        /// <summary>
         /// 清理待查询任务
         /// </summary>
         public void ClearQueryTasks()
@@ -521,6 +534,33 @@
             var version = sphrep.ReadInt();
             if (version < 1) throw new Exception(string.Format("expected searchd protocol version 1+, got version {0}", version));
             return socket;
+        }
+
+        private string[][] GetStatus()
+        {
+            var req = new SphReq();
+            req.Write(1);
+            req.Write((short)SearchCommand.SEARCHD_COMMAND_STATUS);
+            req.Write((short)Command.VER_COMMAND_STATUS);
+            req.Write(4);
+            req.Write(1);
+            var conn = this.GetConnection();
+            conn.Send(req.GetBuffer());
+            var rece = new byte[1000];
+            var rlen = conn.Receive(rece);
+            conn.Dispose();
+            var rep = new SphRep(rece, rlen);
+            var len = this.CheckResponse(rep);
+            var rows = rep.ReadInt();
+            var cols = rep.ReadInt();
+            var result = new string[rows][];
+            for (int i = 0; i < rows; i++)
+            {
+                var colArray = new string[cols];
+                for (int j = 0; j < cols; j++) colArray[j] = rep.ReadStringNode();
+                result[i] = colArray;
+            }
+            return result;
         }
 
         /// <summary>
@@ -649,6 +689,92 @@
                 sphinxResultList.Add(sphinxResult);
             }
             return sphinxResultList;
+        }
+
+        /// <summary>
+        /// 设置属性范围
+        /// </summary>
+        /// <param name="attribute">属性名</param>
+        /// <param name="max">最大值</param>
+        /// <param name="min">最小值</param>
+        /// <param name="exclude">false【默认】表示匹配范围内的，反正匹配范围外的</param>
+        public void SetFilterRange(string attribute, uint max, uint min, bool exclude = false)
+        {
+            Contract.Requires(max >= min, "max can not less than min");
+            this._filters.Add(new SphinxFilter()
+            {
+                Attr = attribute,
+                UMax = max,
+                UMin = min,
+                Exclude = exclude
+            });
+        }
+
+        /// <summary>
+        /// 增加新的浮点数范围过滤器
+        /// </summary>
+        /// <param name="attribute">属性名</param>
+        /// <param name="max">最大值</param>
+        /// <param name="min"></param>
+        /// <param name="exclude">false【默认】表示匹配范围内的，反正匹配范围外的</param>
+        public void SetFilterFloatRange(string attribute, float max, float min, bool exclude = false)
+        {
+            Contract.Requires(max >= min, "max can not less than min");
+            this._filters.Add(new SphinxFilter()
+            {
+                Attr = attribute,
+                FMax = max,
+                FMin = min,
+                Exclude = exclude
+            });
+        }
+
+        /// <summary>
+        /// 设置地表距离锚点
+        /// </summary>
+        /// <param name="latitudeAttr">经度</param>
+        /// <param name="longitudeAttr">纬度</param>
+        /// <param name="latitude">锚点的经度</param>
+        /// <param name="longitude">锚点的纬度</param>
+        public void SetGeoAnchor(string latitudeAttr, string longitudeAttr, float latitude, float longitude)
+        {
+            Contract.Requires(false == string.IsNullOrWhiteSpace(latitudeAttr) && false == string.IsNullOrWhiteSpace(longitudeAttr), "latitudeAttr or longitudeAttr can not be null or empty or whitespace");
+
+            this._latitudeAttr = latitudeAttr;
+            this._longitudeAttr = longitudeAttr;
+            this._latitude = latitude;
+            this._longitude = longitude;
+        }
+
+        public int UpdateAttributes(string index, IList<string> attr, IDictionary<long, IList<int>> value)
+        {
+            Contract.Requires(false == string.IsNullOrWhiteSpace(index), "index can not be null or empty or whitespace");
+            var req = new SphReq();
+            req.Write(index);
+            req.Write(attr.Count());
+            foreach (var item in attr)
+            {
+                req.Write(item);
+                req.Write(0);
+            }
+            foreach (var item in value)
+            {
+                req.Write(item.Key);
+                foreach (var v in item.Value) req.Write(v);
+            }
+            var tmp = new SphReq();
+            tmp.Write((short)SearchCommand.SEARCHD_COMMAND_UPDATE);
+            tmp.Write((short)Command.VER_COMMAND_UPDATE);
+            tmp.Write(req.Length);
+            req.Mosaic(tmp.CutOffHead(), SphReq.BlockMosaicLocation.Top);
+            var conn = this.GetConnection();
+            conn.Send(req.GetBuffer());
+            var rece = new byte[req.Length * 2];
+            var rlen = conn.Receive(rece);
+            conn.Dispose();
+            var rep = new SphRep(rece, rlen);
+            var len = this.CheckResponse(rep);
+            return rep.ReadInt();
         }
     }
 }

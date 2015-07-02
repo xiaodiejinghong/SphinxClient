@@ -3,13 +3,13 @@
     using Jhong.SphinxClient.Enum;
     using System.Collections.Generic;
 
-    public class SphinxFilter
+    internal class SphinxFilter
     {
         public FilterType Type { get; set; }
 
         public string Attr { get; set; }
 
-        public string Exclude { get; set; }
+        public bool Exclude { get; set; }
 
         public List<int> Values { get; set; }
 
